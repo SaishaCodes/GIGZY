@@ -1,0 +1,643 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE USER & PROFILE MODELS
+// ============================================
+
+enum UserRole {
+  SEEKER
+  PROVIDER
+  HYBRID
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum TrustLevel {
+  LOW
+  MEDIUM
+  HIGH
+  EXCELLENT
+}
+
+model User {
+  id                String              @id @default(cuid())
+  email             String              @unique
+  username          String              @unique
+  passwordHash      String
+  role              UserRole            @default(HYBRID)
+  emailVerified     Boolean             @default(false)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  // Profile Relationships
+  seekerProfile     SeekerProfile?
+  providerProfile   ProviderProfile?
+  
+  // Authentication & Security
+  verificationStatus VerificationStatus  @default(PENDING)
+  trustScore        Float               @default(50.0)
+  trustLevel        TrustLevel          @default(MEDIUM)
+  lastActiveAt      DateTime            @default(now())
+  
+  // Relationships
+  tasksPosted       Task[]             @relation("SeekerTasks")
+  tasksAccepted     Task[]             @relation("ProviderTasks")
+  bids              Bid[]
+  reviewsGiven      Review[]           @relation("ReviewGiven")
+  reviewsReceived   Review[]           @relation("ReviewReceived")
+  disputes          Dispute[]
+  notifications     Notification[]
+  escrowAccounts    EscrowAccount[]
+  resourceListings  ResourceListing[]
+  resourceRentals   ResourceRental[]
+  achievements      UserAchievement[]
+  wallet            Wallet?
+  
+  @@index([email])
+  @@index([username])
+  @@index([role])
+  @@index([trustScore])
+}
+
+model SeekerProfile {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Personal Info
+  fullName            String?
+  avatar              String?
+  bio                 String?   @db.Text
+  phone               String?
+  locationLat         Float?
+  locationLng         Float?
+  locationAddress     String?
+  college             String?
+  major               String?
+  
+  // Stats
+  tasksPosted         Int      @default(0)
+  tasksCompleted      Int      @default(0)
+  totalSpent          Float    @default(0)
+  avgRating           Float    @default(0)
+  totalRatings        Int      @default(0)
+  
+  // Preferences
+  preferredCategories String[]
+  notificationSettings Json     @default("{}")
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([locationLat, locationLng])
+}
+
+model ProviderProfile {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Professional Info
+  fullName            String?
+  avatar              String?
+  bio                 String?   @db.Text
+  phone               String?
+  locationLat         Float?
+  locationLng         Float?
+  locationAddress     String?
+  skills              String[]
+  hourlyRate          Float?
+  availability        Boolean  @default(true)
+  
+  // Verification
+  idDocumentUrl       String?
+  idVerifiedAt        DateTime?
+  idDocumentType      String?
+  
+  // Stats
+  tasksCompleted      Int      @default(0)
+  totalEarned         Float    @default(0)
+  avgRating           Float    @default(0)
+  totalRatings        Int      @default(0)
+  responseRate        Float    @default(0)
+  responseTime        Int?     // in minutes
+  
+  // Achievement System
+  xpPoints            Int      @default(0)
+  level               Int      @default(1)
+  gigzyPro            Boolean  @default(false)
+  
+  // Preferences
+  workingRadius       Float    @default(5.0) // km
+  preferredCategories String[]
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([locationLat, locationLng])
+  @@index([xpPoints])
+  @@index([level])
+}
+
+// ============================================
+// TASK & BIDDING MODELS
+// ============================================
+
+enum TaskStatus {
+  POSTED
+  BIDDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  ESCROW_RELEASED
+}
+
+enum TaskUrgency {
+  NORMAL
+  URGENT
+  ASAP
+}
+
+enum TaskCategory {
+  ERRANDS
+  TUTORING
+  FITNESS
+  CREATIVE
+  STUDY_PRODUCTIVITY
+  FUN_SOCIAL
+  ENTREPRENEURSHIP
+  TECH_SUPPORT
+  EVENT_ASSISTANCE
+  DELIVERY
+  LABOR
+  CONSULTING
+  OTHER
+}
+
+model Task {
+  id              String        @id @default(cuid())
+  title           String
+  description     String        @db.Text
+  category        TaskCategory
+  urgency         TaskUrgency   @default(NORMAL)
+  status          TaskStatus    @default(POSTED)
+  
+  // Relationships
+  seekerId        String
+  seeker          User          @relation("SeekerTasks", fields: [seekerId], references: [id], onDelete: Cascade)
+  providerId      String?
+  provider        User?         @relation("ProviderTasks", fields: [providerId], references: [id])
+  acceptedBidId   String?
+  acceptedBid     Bid?          @relation("AcceptedBid", fields: [acceptedBidId], references: [id])
+  
+  // Location & Timing
+  locationLat     Float
+  locationLng     Float
+  locationAddress String
+  scheduledAt     DateTime?
+  duration        Int?          // in minutes
+  
+  // Pricing
+  budgetMin       Float
+  budgetMax       Float
+  finalPrice      Float?
+  instantHire     Boolean       @default(false)
+  
+  // Escrow
+  escrowHeld      Boolean       @default(false)
+  escrowAmount    Float?
+  platformFee     Float?        // 10-20% commission
+  
+  // Stats
+  views           Int           @default(0)
+  bidsCount       Int           @default(0)
+  
+  // Timestamps
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  acceptedAt      DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // Relationships
+  bids            Bid[]
+  timeline        TaskTimeline[]
+  
+  @@index([status])
+  @@index([category])
+  @@index([seekerId])
+  @@index([providerId])
+  @@index([locationLat, locationLng])
+  @@index([urgency])
+  @@index([createdAt])
+  @@index([scheduledAt])
+}
+
+model Bid {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  providerId  String
+  provider    User      @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  
+  amount      Float
+  message     String?   @db.Text
+  estimatedDuration Int?
+  
+  status      String    @default("PENDING") // PENDING, ACCEPTED, REJECTED, WITHDRAWN
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  acceptedAt  DateTime?
+  
+  // This bid could be the accepted one
+  task        Task?     @relation("AcceptedBid")
+  
+  @@index([taskId])
+  @@index([providerId])
+  @@index([status])
+}
+
+model TaskTimeline {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  status      TaskStatus
+  message     String?
+  metadata    Json?
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([taskId])
+  @@index([createdAt])
+}
+
+// ============================================
+// PAYMENT & ESCROW MODELS
+// ============================================
+
+enum TransactionType {
+  TASK_PAYMENT
+  ESCROW_DEPOSIT
+  ESCROW_RELEASE
+  WITHDRAWAL
+  REFUND
+  PLATFORM_FEE
+  REWARD_BONUS
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Wallet {
+  id              String              @id @default(cuid())
+  userId          String              @unique
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  balance         Float               @default(0)
+  pendingBalance  Float               @default(0)
+  totalEarned     Float               @default(0)
+  totalSpent      Float               @default(0)
+  
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  transactions    Transaction[]
+  
+  @@index([userId])
+}
+
+model Transaction {
+  id              String            @id @default(cuid())
+  walletId        String
+  wallet          Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  
+  type            TransactionType
+  status          TransactionStatus  @default(PENDING)
+  amount          Float
+  fee             Float             @default(0)
+  description     String?
+  metadata        Json?
+  
+  // References
+  taskId          String?
+  
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+  
+  @@index([walletId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model EscrowAccount {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId          String    @unique
+  amount          Float
+  platformFee     Float     @default(0)
+  
+  status          String    @default("HELD") // HELD, RELEASED, REFUNDED
+  
+  createdAt       DateTime  @default(now())
+  releasedAt      DateTime?
+  refundedAt      DateTime?
+  
+  @@index([userId])
+  @@index([taskId])
+  @@index([status])
+}
+
+// ============================================
+// REVIEWS & REPUTATION MODELS
+// ============================================
+
+model Review {
+  id          String   @id @default(cuid())
+  taskId      String
+  
+  reviewerId  String
+  reviewer    User     @relation("ReviewGiven", fields: [reviewerId], references: [id], onDelete: Cascade)
+  
+  revieweeId  String
+  reviewee    User     @relation("ReviewReceived", fields: [revieweeId], references: [id], onDelete: Cascade)
+  
+  rating      Int      // 1-5
+  title       String?
+  comment     String?  @db.Text
+  
+  // Categories
+  communication  Int?
+  professionalism Int?
+  timeliness     Int?
+  quality        Int?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([taskId])
+  @@index([reviewerId])
+  @@index([revieweeId])
+  @@index([rating])
+}
+
+// ============================================
+// DISPUTE & SUPPORT MODELS
+// ============================================
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+enum DisputeReason {
+  QUALITY_ISSUES
+  TIMELINE_DELAY
+  PAYMENT_DISAGREEMENT
+  BEHAVIOR_ISSUES
+  SAFETY_CONCERNS
+  OTHER
+}
+
+model Dispute {
+  id          String        @id @default(cuid())
+  taskId      String
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  reporterId  String
+  reporter    User          @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  
+  status      DisputeStatus @default(OPEN)
+  reason      DisputeReason
+  description String        @db.Text
+  
+  evidence    String[]      // URLs to images/documents
+  resolution  String?       @db.Text
+  
+  // Escrow release decision
+  refundSeeker Boolean?
+  releaseProvider Boolean?
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  resolvedAt  DateTime?
+  
+  @@index([taskId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+// ============================================
+// RESOURCE & SHARING MODELS
+// ============================================
+
+enum ResourceType {
+  CALCULATOR
+  CAMERA
+  LAB_EQUIPMENT
+  BOOKS
+  TOOLS
+  OTHER
+}
+
+enum ResourceStatus {
+  AVAILABLE
+  RENTED
+  UNAVAILABLE
+}
+
+model ResourceListing {
+  id              String          @id @default(cuid())
+  ownerId         String
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  title           String
+  description     String?         @db.Text
+  type            ResourceType
+  category        String?
+  
+  // Pricing
+  dailyRate       Float
+  weeklyRate      Float?
+  deposit         Float?
+  
+  // Location
+  locationLat     Float?
+  locationLng     Float?
+  locationAddress String?
+  
+  // Images
+  images          String[]
+  
+  // Availability
+  status          ResourceStatus  @default(AVAILABLE)
+  condition       String?         // NEW, GOOD, FAIR, POOR
+  
+  // Stats
+  totalRentals    Int             @default(0)
+  rating          Float           @default(0)
+  reviews         Int             @default(0)
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  rentals         ResourceRental[]
+  
+  @@index([ownerId])
+  @@index([type])
+  @@index([status])
+  @@index([locationLat, locationLng])
+}
+
+model ResourceRental {
+  id              String      @id @default(cuid())
+  listingId       String
+  listing         ResourceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  
+  renterId        String
+  renter          User        @relation(fields: [renterId], references: [id], onDelete: Cascade)
+  
+  startDate       DateTime
+  endDate         DateTime
+  
+  amount          Float
+  deposit         Float?
+  status          String      @default("ACTIVE") // ACTIVE, COMPLETED, CANCELLED
+  
+  notes           String?     @db.Text
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([listingId])
+  @@index([renterId])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+// ============================================
+// GAMIFICATION & ACHIEVEMENTS
+// ============================================
+
+enum AchievementType {
+  FIRST_TASK
+  RATED_EXCELLENT
+  LOCAL_LEGEND
+  GIGZY_PRO
+  TRUSTED_PROVIDER
+  COMMUNITY_HELPER
+  POWER_SEEKER
+}
+
+model Achievement {
+  id          String          @id @default(cuid())
+  name        String
+  description String
+  type        AchievementType
+  icon        String?
+  xpReward    Int
+  badgeUrl    String?
+  
+  // Requirements
+  requirements Json
+  
+  createdAt   DateTime        @default(now())
+  
+  users       UserAchievement[]
+  
+  @@index([type])
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  
+  earnedAt      DateTime    @default(now())
+  
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@index([achievementId])
+}
+
+// ============================================
+// NOTIFICATIONS MODELS
+// ============================================
+
+enum NotificationType {
+  TASK_POSTED
+  BID_RECEIVED
+  BID_ACCEPTED
+  TASK_STARTED
+  TASK_COMPLETED
+  PAYMENT_RELEASED
+  NEW_REVIEW
+  DISPUTE_CREATED
+  RESOURCE_AVAILABLE
+  ACHIEVEMENT_UNLOCKED
+  NUDGE_SEEK_TO_PROVIDE
+  NUDGE_PROVIDE_TO_SEEK
+}
+
+model Notification {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type        NotificationType
+  title       String
+  message     String            @db.Text
+  metadata    Json?
+  
+  read        Boolean           @default(false)
+  actionUrl   String?
+  
+  createdAt   DateTime          @default(now())
+  
+  @@index([userId])
+  @@index([read])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ============================================
+// SYSTEM CONFIGURATION
+// ============================================
+
+model SystemConfig {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+  
+  @@index([key])
+}
